@@ -83,11 +83,11 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 # Args to allow for easy convertion of python script to notebook
 class Args():
     def __init__(self):
-        self.output_dir = 'output-small'
+        self.output_dir = 'output-medium'
         self.model_type = 'gpt2'
-        self.model_name_or_path = 'microsoft/DialoGPT-small'
-        self.config_name = 'microsoft/DialoGPT-small'
-        self.tokenizer_name = 'microsoft/DialoGPT-small'
+        self.model_name_or_path = 'microsoft/DialoGPT-medium'
+        self.config_name = 'microsoft/DialoGPT-medium'
+        self.tokenizer_name = 'microsoft/DialoGPT-medium'
         self.cache_dir = 'cached'
         self.block_size = 512
         self.do_train = True
@@ -622,9 +622,12 @@ def main(df_trn, df_val):
 
     return results
 
+# Main call
+main(trn_df, val_df)
+
 #from transformers import AutoModelWithLMHead, AutoTokenizer
-tokenizer = AutoTokenizer.from_pretrained('microsoft/DialoGPT-small')
-model = AutoModelWithLMHead.from_pretrained('output-small')
+tokenizer = AutoTokenizer.from_pretrained('microsoft/DialoGPT-medium')
+model = AutoModelWithLMHead.from_pretrained('output-medium')
 
 # Let's chat for 5 lines
 for step in range(2):
