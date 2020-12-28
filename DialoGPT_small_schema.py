@@ -1,8 +1,10 @@
+"""
+# pip install transformers & datasets first
+# model: DialoGPT
+"""
 from transformers import AutoModelWithLMHead, AutoTokenizer, pipeline # AutoModelForCausalLM
 import os
 import torch
-import io
-import pandas as pd
 import datasets
 from datasets import load_dataset, load_metric, list_datasets, list_metrics
 from torch.utils.data import DataLoader
@@ -12,9 +14,25 @@ import pyarrow
 if int(pyarrow.__version__.split('.')[1]) < 16 and int(pyarrow.__version__.split('.')[0]) == 0:
     import os
     os.kill(os.getpid(), 9)
-    
-tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-small")
-model = AutoModelWithLMHead.from_pretrained("microsoft/DialoGPT-small")
+
+# Chat with DialoGPT out of the box
+tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
+model = AutoModelWithLMHead.from_pretrained("microsoft/DialoGPT-medium")
+
+"""
+for step in range(2):
+    # encode the new user input, add the eos_token and return a tensor in Pytorch
+    new_user_input_ids = tokenizer.encode(input(">> User:") + tokenizer.eos_token, return_tensors='pt')
+
+    # append the new user input tokens to the chat history
+    bot_input_ids = torch.cat([chat_history_ids, new_user_input_ids], dim=-1) if step > 0 else new_user_input_ids
+
+    # generated a response while limiting the total chat history to 1000 tokens, 
+    chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
+
+    # pretty print last ouput tokens from bot
+    print("DialoGPT: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
+"""
 
 import glob
 import logging
@@ -108,17 +126,17 @@ test_data = schema_guided['test']
 # pack the list of utterances out into pandas DataFrame because the model takes this
 listall_tr, listall_val, listall_te = [], [], []
 
-conv_len_tr = (len(train_data['turns']))
+conv_len_tr = len(train_data['turns'])
 for conv in range(conv_len_tr):
   list1 = train_data['turns'][conv]['utterance']
   listall_tr.extend(list1)
 
-conv_len_va = (len(valid_data['turns']))
+conv_len_va = len(valid_data['turns'])
 for conv in range(conv_len_va):
   list1 = valid_data['turns'][conv]['utterance']
   listall_val.extend(list1)
 
-conv_len_te = (len(test_data['turns']))
+conv_len_te = len(test_data['turns'])
 for conv in range(conv_len_te):
   list1 = test_data['turns'][conv]['utterance']
   listall_te.extend(list1)
@@ -126,9 +144,6 @@ for conv in range(conv_len_te):
 tr_data = pd.DataFrame(listall_tr)
 val_data = pd.DataFrame(listall_val)
 te_data = pd.DataFrame(listall_te)
-tr_data.head(5)
-val_data.head(5)
-te_data.head(5)
 
 contexted_tr, contexted_val, contexted_te = [], [], []
 n = 7
@@ -137,33 +152,30 @@ for i in range(n, len(tr_data)):
     row = []
     prev = i - 1 - n # we additionally substract 1, so row will contain current response and 7 previous responses  
     for j in range(i, prev, -1):
-        row.append(tr_data[j])
+        row.append(tr_data[0][j])
         contexted_tr.append(row)
 
 for i in range(n, len(val_data)):
     row = []
     prev = i - 1 - n # we additionally substract 1, so row will contain current response and 7 previous responses  
     for j in range(i, prev, -1):
-        row.append(val_data[j])
+        row.append(val_data[0][j])
         contexted_val.append(row)
 
 for i in range(n, len(te_data)):
     row = []
     prev = i - 1 - n # we additionally substract 1, so row will contain current response and 7 previous responses  
     for j in range(i, prev, -1):
-        row.append(te_data[j])
+        row.append(te_data[0][j])
         contexted_te.append(row)
 
-#len(contexted)
 columns = ['response', 'context'] 
 columns = columns + ['context/'+str(i) for i in range(n-1)]
 columns
 trn_df = pd.DataFrame.from_records(contexted_tr, columns=columns)
 val_df = pd.DataFrame.from_records(contexted_val, columns=columns)
 te_df = pd.DataFrame.from_records(contexted_te, columns=columns)
-trn_df.head(5)
-val_df.head(5)
-te_df.head(5)
+#print(trn_df.head(5))
 
 # convert data to suitable format- concatenate responses in one string for each row (and add 'end of string' token between responses)
 def construct_conv(row, tokenizer, eos = True):
@@ -203,7 +215,7 @@ class ConversationDataset(Dataset):
 
     def __getitem__(self, item):
         return torch.tensor(self.examples[item], dtype=torch.long)
-        
+
 # Caching and storing of data/checkpoints
 def load_and_cache_examples(args, tokenizer, df_trn, df_val, evaluate=False):
     return ConversationDataset(tokenizer, args, df_val if evaluate else df_trn)
@@ -248,7 +260,7 @@ def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
     for checkpoint in checkpoints_to_be_deleted:
         logger.info("Deleting older checkpoint [{}] due to args.save_total_limit".format(checkpoint))
         shutil.rmtree(checkpoint)
-        
+
 # Training
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
@@ -498,10 +510,8 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
             logger.info("  %s = %s", key, str(result[key]))
             writer.write("%s = %s\n" % (key, str(result[key])))
             
-
-
     return result
-    
+
 # Main runner
 def main(df_trn, df_val):
     args = Args()
@@ -611,7 +621,7 @@ def main(df_trn, df_val):
             results.update(result)
 
     return results
-    
+
 #from transformers import AutoModelWithLMHead, AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained('microsoft/DialoGPT-small')
 model = AutoModelWithLMHead.from_pretrained('output-small')
