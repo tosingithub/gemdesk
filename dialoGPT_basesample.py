@@ -2,6 +2,11 @@ from transformers import AutoModelWithLMHead, AutoTokenizer, AutoModelForCausalL
 import os
 import torch
 
+# Chat with DialoGPT out of the box
+tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
+model = AutoModelWithLMHead.from_pretrained("microsoft/DialoGPT-medium")
+
+"""
 for step in range(2):
     # encode the new user input, add the eos_token and return a tensor in Pytorch
     new_user_input_ids = tokenizer.encode(input(">> User:") + tokenizer.eos_token, return_tensors='pt')
@@ -14,13 +19,7 @@ for step in range(2):
 
     # pretty print last ouput tokens from bot
     print("DialoGPT: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
-
-from google.colab import files
-uploaded = files.upload()
-
-import io
-import pandas as pd
-#df2 = pd.read_csv(io.BytesIO(uploaded['RickAndMortyScripts.csv']))
+"""
 
 import glob
 import logging
@@ -71,18 +70,18 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 # Args to allow for easy convertion of python script to notebook
 class Args():
     def __init__(self):
-        self.output_dir = 'output-small'
+        self.output_dir = 'output-medium'
         self.model_type = 'gpt2'
-        self.model_name_or_path = 'microsoft/DialoGPT-small'
-        self.config_name = 'microsoft/DialoGPT-small'
-        self.tokenizer_name = 'microsoft/DialoGPT-small'
+        self.model_name_or_path = 'microsoft/DialoGPT-medium'
+        self.config_name = 'microsoft/DialoGPT-medium'
+        self.tokenizer_name = 'microsoft/DialoGPT-medium'
         self.cache_dir = 'cached'
         self.block_size = 512
         self.do_train = True
         self.do_eval = True
         self.evaluate_during_training = False
-        self.per_gpu_train_batch_size = 4
-        self.per_gpu_eval_batch_size = 4
+        self.per_gpu_train_batch_size = 2
+        self.per_gpu_eval_batch_size = 2
         self.gradient_accumulation_steps = 1
         self.learning_rate = 5e-5
         self.weight_decay = 0.0
@@ -106,8 +105,8 @@ class Args():
 
 args = Args()
 
-all_rick = pd.read_csv('RickAndMortyScripts.csv')
-all_rick.head(10)
+all_rick = pd.read_csv('redditdialogues.csv') # RickAndMortyScripts
+#print(all_rick.head(10))
 
 contexted = []
 n = 7
@@ -118,17 +117,21 @@ for i in range(n, len(all_rick['line'])):
     for j in range(i, prev, -1):
         row.append(all_rick['line'][j])
         contexted.append(row)
-        
+
 #len(contexted)
 columns = ['response', 'context'] 
 columns = columns + ['context/'+str(i) for i in range(n-1)]
 columns
 df = pd.DataFrame.from_records(contexted, columns=columns)
-df.head(5)
+#print(df.head(5))
 
 # train/test split
-trn_df, val_df = train_test_split(df, test_size = 0.1)
-trn_df.head()
+trn_df, test_df = train_test_split(df, test_size = 0.15)
+trn_df, val_df = train_test_split(trn_df, test_size = 0.176) # 70:15:15% ratio
+
+trn_df, test_df = train_test_split(trn_df, test_size = 0.15)
+
+
 
 # convert data to suitable format- concatenate responses in one string for each row (and add 'end of string' token between responses)
 def construct_conv(row, tokenizer, eos = True):
@@ -168,7 +171,7 @@ class ConversationDataset(Dataset):
 
     def __getitem__(self, item):
         return torch.tensor(self.examples[item], dtype=torch.long)
-        
+
 # Caching and storing of data/checkpoints
 def load_and_cache_examples(args, tokenizer, df_trn, df_val, evaluate=False):
     return ConversationDataset(tokenizer, args, df_val if evaluate else df_trn)
@@ -213,7 +216,7 @@ def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
     for checkpoint in checkpoints_to_be_deleted:
         logger.info("Deleting older checkpoint [{}] due to args.save_total_limit".format(checkpoint))
         shutil.rmtree(checkpoint)
-        
+
 # Training
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
@@ -446,9 +449,14 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
         labels = labels.to(args.device)
 
         with torch.no_grad():
+            # ADD: tensor size error for some evaluation data, so use try except
+            #try:
             outputs = model(inputs, labels=labels)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
+            #except:
+             #   print("Likely tensor size error occured with outputs")
+              #  continue
         nb_eval_steps += 1
 
     eval_loss = eval_loss / nb_eval_steps
@@ -457,7 +465,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     result = {"perplexity": perplexity}
 
     output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
-    with open(output_eval_file, "w") as writer:
+    with open(output_eval_file, "a+") as writer:
         logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
@@ -466,10 +474,13 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
 
 
     return result
-    
+
 # Main runner
-def main(df_trn, df_val):
+def main(df_trn, df_val, trainingbool=True):
     args = Args()
+    #ADDITION
+    if trainingbool == False:
+        args.do_train = False
     
     if args.should_continue:
         sorted_checkpoints = _sorted_checkpoints(args)
@@ -576,16 +587,19 @@ def main(df_trn, df_val):
             results.update(result)
 
     return results
-    
+
 # Main call
 main(trn_df, val_df)
+# Now evaluate the test set but turn training off
+main(trn_df, test_df, False)
 
 #from transformers import AutoModelWithLMHead, AutoTokenizer
-tokenizer = AutoTokenizer.from_pretrained('microsoft/DialoGPT-small')
-model = AutoModelWithLMHead.from_pretrained('output-small')
+#from saved points
+tokenizer = AutoTokenizer.from_pretrained('output-medium')
+model = AutoModelWithLMHead.from_pretrained('output-medium')
 
 # Let's chat for 5 lines
-for step in range(2):
+for step in range(1):
     # encode the new user input, add the eos_token and return a tensor in Pytorch
     new_user_input_ids = tokenizer.encode(input(">> User:") + tokenizer.eos_token, return_tensors='pt')
     # print(new_user_input_ids)
@@ -605,5 +619,4 @@ for step in range(2):
     )
     
     # pretty print last ouput tokens from bot
-    print("RickBot: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
-    
+    print("SvenskaBot: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
